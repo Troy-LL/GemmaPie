@@ -1,0 +1,44 @@
+# Runtime configuration for `orchestrate.py` / `src.pipeline`
+#
+# Per-agent Gemma (or other) model ids for `-m`. See agent_configs.md for the
+# May 2026 catalog and tier rationale. Missing keys fall back to `model`.
+
+model: gemma-4-26b-a4b-it
+
+models:
+  researcher: gemma-4-26b-a4b-it
+  skeptic: gemma-4-e4b-it
+  contrarian: gemma-4-26b-a4b-it
+  reviewer: gemma-4-31b-it
+  synthesizer: gemma-4-31b-it
+
+timeouts:
+  researcher: 180
+  skeptic: 180
+  contrarian: 180
+  reviewer: 240
+  synthesizer: 300
+  default: 180
+
+paths:
+  prompts_dir: prompts
+
+pipeline:
+  disagreement_threshold: 3
+  parallel_initial: false
+
+# When true (or SHOW_AGENT_THINKING=1, or --show-thinking), write *_thinking.txt and include traces in report/transcript.
+thinking:
+  enabled: false
+
+# When enabled (or SESSION_REUSE=1, or --reuse-similar), match prior sessions under sessions/ by
+# question similarity (difflib). inject = add prior answer to researcher context only; short_circuit =
+# skip Gemini when a cached integrated answer exists (see session_reuse keys above).
+session_reuse:
+  enabled: false
+  mode: inject
+  similarity_threshold: 0.88
+  max_prior_chars: 8000
+
+context:
+  max_chars: 48000
