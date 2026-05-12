@@ -12,12 +12,13 @@ Judge- and developer-facing index. Paths are relative to the repository root.
 | [../README.md](../README.md) | Install, run commands, session artifacts |
 | [../DEMO_CHECKLIST.md](../DEMO_CHECKLIST.md) | Short demo recording checklist |
 | [SESSION_REUSE_USER_GUIDE.md](SESSION_REUSE_USER_GUIDE.md) | **Plain language:** session reuse, stale answers, safe defaults |
+| [ADAPTIVE_TIERS.md](ADAPTIVE_TIERS.md) | Adaptive routing (T0/T1/T2): limits, router modes, fallback behavior |
 
 ## Runtime configuration
 
 | File | Description |
 |------|-------------|
-| [../config.yaml](../config.yaml) | `model`, per-role `models:`, timeouts, `thinking.enabled`, `session_reuse`, pipeline flags |
+| [../config.yaml](../config.yaml) | `model`, per-role `models:`, timeouts, `thinking.enabled`, `session_reuse`, `adaptive`, pipeline flags |
 
 ## External references
 

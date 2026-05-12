@@ -46,3 +46,30 @@ session_reuse:
 
 context:
   max_chars: 48000
+
+# --- Adaptive tier routing (see docs/ADAPTIVE_TIERS.md) ---
+# Runs only when enabled is true AND router is not off. CLI --adaptive overrides router (off forces off).
+adaptive:
+  enabled: false
+  router: off
+  router_model: gemma-4-e4b-it
+  router_timeout: 30
+  models_light:
+    researcher: gemma-4-e4b-it
+    synthesizer: gemma-4-e4b-it
+  fallback_to_full: true
+  max_trivial_add_digits: 6
+  require_claims_for_t1_fallback: false
+
+# Adaptive tier routing (see docs/ADAPTIVE_TIERS.md). Defaults preserve legacy behavior (disabled).
+adaptive:
+  enabled: false
+  router: off
+  router_model: null
+  router_timeout: 30
+  models_light:
+    researcher: gemma-4-e4b-it
+    synthesizer: gemma-4-e4b-it
+  fallback_to_full: true
+  max_trivial_add_digits: 6
+  require_claims_for_t1_fallback: true

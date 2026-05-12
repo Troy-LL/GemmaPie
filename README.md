@@ -56,6 +56,12 @@ python orchestrate.py --manual "Does social media harm teenagers?"
 python orchestrate.py --parallel "Is nuclear energy safe?"
 ```
 
+**Adaptive tiers** (optional cost/latency routing: trivial add → T0, optional SLM router → T1 light path, else full T2). Read [`docs/ADAPTIVE_TIERS.md`](docs/ADAPTIVE_TIERS.md), enable `adaptive.enabled` in [`config.yaml`](config.yaml), or override for one run:
+
+```bash
+python orchestrate.py --adaptive heuristic_then_slm "3 + 5"
+```
+
 **Plain logs** (no Rich live panel):
 
 ```bash
@@ -74,6 +80,7 @@ Each run creates `sessions/session_YYYYMMDD_HHMMSS/` containing:
 
 | File | Purpose |
 |------|---------|
+| `adaptive_tier.json` | When adaptive routing runs: chosen tier, router, and classification reasons |
 | `question.txt` | User question |
 | `scratchpad.md` | Chronological agent outputs |
 | `shared_facts.md` | Lines extracted from Researcher outputs prefixed with `SHARED_FACT:` |
@@ -96,6 +103,7 @@ GemmaPie can **reuse past sessions** to save work. Matching uses **similar wordi
 ## Configuration
 
 - **Timeouts / per-agent models / context budget:** [`config.yaml`](config.yaml)
+- **Adaptive tier routing (T0/T1/T2):** [`config.yaml`](config.yaml) `adaptive` and [`docs/ADAPTIVE_TIERS.md`](docs/ADAPTIVE_TIERS.md)
 - **Session reuse gates (word overlap, max age, zero-call opt-in):** [`config.yaml`](config.yaml) `session_reuse` and the user guide above
 - **Role instructions:** [`prompts/`](prompts/)
 - **Sampling intent vs CLI reality:** [`agent_configs.md`](agent_configs.md)

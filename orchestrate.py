@@ -10,6 +10,7 @@ Usage:
 After each run, the Synthesizer's integrated answer is printed under FINAL ANSWER and saved as
 sessions/.../final_answer.txt (alongside report.md). Optional session reuse: see
 docs/SESSION_REUSE_USER_GUIDE.md. Zero-call shortcut needs allow_zero_call_reuse or --allow-zero-call-reuse.
+Optional adaptive tier routing: docs/ADAPTIVE_TIERS.md and config adaptive / --adaptive.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from typing import Any
 
 import yaml
 
-from src import reporting, scratchpad, session_cache
+from src import adaptive, reporting, scratchpad, session_cache
 from src.dashboard import Dashboard
 from src.parsing import strip_synthesizer_claims_block
 from src.pipeline import parse_confidence, run_pipeline
@@ -121,6 +122,8 @@ def _short_circuit_summary(
         },
         "thinking_outputs": {},
         "show_thinking": False,
+        "adaptive_tier": None,
+        "adaptive_meta": None,
     }
 
 
@@ -187,6 +190,15 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "Expert only: allow mode short_circuit to copy a prior answer with zero Gemini calls. "
             "See docs/SESSION_REUSE_USER_GUIDE.md; stale answers are possible."
+        ),
+    )
+    parser.add_argument(
+        "--adaptive",
+        choices=("off", "heuristic", "heuristic_then_slm"),
+        default=None,
+        help=(
+            "Adaptive tier routing override: `off` disables routing for this run; otherwise overrides "
+            "config `adaptive.router`. See docs/ADAPTIVE_TIERS.md."
         ),
     )
     args = parser.parse_args(argv)
@@ -258,6 +270,8 @@ def main(argv: list[str] | None = None) -> int:
     matched_age_days: float | None = None
     prior_q = ""
     summary: dict[str, Any] = {}
+    adaptive_tier: str | None = None
+    adaptive_meta: dict[str, Any] | None = None
 
     if reuse_enabled and reuse_mode_effective != "off":
         thr = (
@@ -330,6 +344,48 @@ def main(argv: list[str] | None = None) -> int:
                 dashboard.record_result(agent, res)
 
         if not short_circuited:
+            acfg = cfg.get("adaptive") or {}
+            if not isinstance(acfg, dict):
+                acfg = {}
+            cfg_adaptive_enabled = bool(acfg.get("enabled", False))
+            eff_router = str(acfg.get("router", "off")).strip().lower()
+            if args.adaptive is not None:
+                if args.adaptive == "off":
+                    eff_router = "off"
+                else:
+                    eff_router = str(args.adaptive)
+            run_adaptive = cfg_adaptive_enabled and eff_router not in ("off", "")
+
+            if run_adaptive:
+                max_digits = int(acfg.get("max_trivial_add_digits", 6))
+                h = adaptive.classify_heuristic(question, max_digits)
+                final_tier = "T2"
+                final_reason = "unclassified"
+                slm_reason: str | None = None
+                if h.tier == "T0":
+                    final_tier = "T0"
+                    final_reason = h.reason
+                elif h.tier is None:
+                    if eff_router == "heuristic":
+                        final_tier = "T2"
+                        final_reason = h.reason
+                    elif eff_router == "heuristic_then_slm":
+                        slm = adaptive.classify_slm(question, cfg, session_path)
+                        final_tier = slm.tier if slm.tier in ("T1", "T2") else "T2"
+                        final_reason = slm.reason
+                        slm_reason = slm.reason
+                adaptive_tier = final_tier
+                adaptive_meta = {
+                    "reason": final_reason,
+                    "router": eff_router,
+                    "heuristic_reason": h.reason,
+                    "classify_slm_reason": slm_reason,
+                }
+                if final_tier == "T0" and h.t0_a is not None:
+                    adaptive_meta["t0_a"] = h.t0_a
+                    adaptive_meta["t0_b"] = h.t0_b
+                    adaptive_meta["t0_sum"] = h.t0_sum
+
             summary = run_pipeline(
                 root=root,
                 session_path=session_path,
@@ -342,6 +398,8 @@ def main(argv: list[str] | None = None) -> int:
                 on_agent_done=on_done,
                 show_thinking=eff_thinking,
                 prior_reference=prior_reference,
+                adaptive_tier=adaptive_tier,
+                adaptive_meta=adaptive_meta,
             )
         else:
             print(
