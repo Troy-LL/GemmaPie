@@ -88,7 +88,7 @@ def _short_circuit_summary(
     cfg: dict[str, Any],
 ) -> dict[str, Any]:
     thr = int((cfg.get("pipeline") or {}).get("disagreement_threshold", 3))
-    default_model = str(cfg.get("model", "gemini-2.0-flash"))
+    default_model = str(cfg.get("model", "gemini-2.5-flash"))
     models_map = cfg.get("models")
     if not isinstance(models_map, dict):
         models_map = {}

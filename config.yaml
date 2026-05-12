@@ -3,16 +3,16 @@
 # Per-agent model ids for `gemini -m`. Use ids from `gemini models list` for your
 # auth (API key or Google account). For heterogeneous Gemma 4 tiers, see agent_configs.md.
 
-# Default stack: Gemini 2.0 Flash everywhere (works with typical Google-account CLI auth).
-# Swap roles to e.g. gemini-2.5-pro or gemini-1.5-pro once `gemini models list` shows them.
-model: gemini-2.0-flash
+# Default stack: Gemini 2.5 Flash (matches current Gemini CLI “Auto 2.5” family; 2.0 ids may 404).
+# Use `gemini models list` and set ids exactly. Heavier roles can use gemini-2.5-pro if listed.
+model: gemini-2.5-flash
 
 models:
-  researcher: gemini-2.0-flash
-  skeptic: gemini-2.0-flash
-  contrarian: gemini-2.0-flash
-  reviewer: gemini-2.0-flash
-  synthesizer: gemini-2.0-flash
+  researcher: gemini-2.5-flash
+  skeptic: gemini-2.5-flash
+  contrarian: gemini-2.5-flash
+  reviewer: gemini-2.5-flash
+  synthesizer: gemini-2.5-flash
 
 timeouts:
   researcher: 180
@@ -65,11 +65,11 @@ rate_limit:
 adaptive:
   enabled: false
   router: off
-  router_model: gemini-2.0-flash
+  router_model: gemini-2.5-flash
   router_timeout: 30
   models_light:
-    researcher: gemini-2.0-flash
-    synthesizer: gemini-2.0-flash
+    researcher: gemini-2.5-flash
+    synthesizer: gemini-2.5-flash
   fallback_to_full: true
   max_trivial_add_digits: 6
   require_claims_for_t1_fallback: false

@@ -13,7 +13,7 @@ Multi-agent **peer research** orchestrated in Python around the **Google Gemini 
 
 1. **Python 3.10+**
 2. **Google Gemini CLI** installed and on `PATH` as `gemini`, authenticated per [Authentication](https://google-gemini.github.io/gemini-cli/docs/get-started/authentication.html).
-3. Model ids your account can run. Set **`model`** (global default) and optional **`models:`** per role in [`config.yaml`](config.yaml). The shipped defaults use **`gemini-2.0-flash`** (typical **Google-account** Gemini CLI auth). For **Gemma 4** heterogeneous tiers when your key supports them, see [`agent_configs.md`](agent_configs.md).
+3. Model ids your account can run. Set **`model`** (global default) and optional **`models:`** per role in [`config.yaml`](config.yaml). Shipped defaults use **`gemini-2.5-flash`** (aligned with current [Gemini CLI model docs](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/model.md); older ids like `gemini-2.0-flash` may return **404**). For **Gemma 4** tiers when your key lists them, see [`agent_configs.md`](agent_configs.md).
 
 ### Model verification (smoke)
 
@@ -119,6 +119,7 @@ GemmaPie can **reuse past sessions** to save work. Matching uses **similar wordi
 | Rich Live + extra console quirks | Each `gemini` call uses `CREATE_NO_WINDOW` on Windows and **`cwd` = the session folder** (not the whole repo) so the CLI indexes a small workspace. |
 | `` `gemini` exited with code 41 `` + “must specify … API_KEY” | Set **`GEMINI_API_KEY`** or **`GOOGLE_API_KEY`** (see [`.env.example`](.env.example)) or run the CLI [authentication](https://google-gemini.github.io/gemini-cli/docs/get-started/authentication.html) flow. Until this works, `report.md` will show every agent as failed and the **FINAL ANSWER** block will say no integrated answer was produced. |
 | Quota / 429 / “rate limit” / `TerminalQuotaError` | The run uses [`config.yaml`](config.yaml) **`rate_limit`** (retries + backoff). Raise limits in Google AI Studio / billing, reduce agents (e.g. adaptive T1), use lighter models, or increase `min_interval_s` / lower concurrency. |
+| `ModelNotFoundError` / “Requested entity was not found” (404) | Your CLI/API build does not expose that `-m` id. Run **`gemini models list`**, copy an exact **`gemini-*`** string into **`model`** and every **`models:`** line in [`config.yaml`](config.yaml) (and `adaptive.*` if used). Prefer **`gemini-2.5-flash`** or **`gemini-2.5-pro`** per current CLI docs. |
 
 ## Anchor demo (video)
 

@@ -150,7 +150,7 @@ def _run_full_pipeline_core(
     the full stack so adaptive routing cannot re-enter. ``adaptive_light`` uses ``adaptive.models_light``
     for researcher/synthesizer when not ``tier_locked_t2``.
     """
-    default_model = str(cfg.get("model", "gemini-2.0-flash"))
+    default_model = str(cfg.get("model", "gemini-2.5-flash"))
     models_map = cfg.get("models")
     if not isinstance(models_map, dict):
         models_map = {}
@@ -510,7 +510,7 @@ def run_pipeline(
         )
         return summary
 
-    default_model = str(cfg.get("model", "gemini-2.0-flash"))
+    default_model = str(cfg.get("model", "gemini-2.5-flash"))
     models_map = cfg.get("models")
     if not isinstance(models_map, dict):
         models_map = {}
