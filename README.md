@@ -87,9 +87,16 @@ Each run creates `sessions/session_YYYYMMDD_HHMMSS/` containing:
 
 Full link index: [`docs/RESOURCES.md`](docs/RESOURCES.md).
 
+## Session reuse (optional)
+
+GemmaPie can **reuse past sessions** to save work. Matching uses **similar wording**, not true “understanding,” and **old answers can be wrong**. Defaults favor **inject** (prior text as background; **full debate still runs**). Copying an old answer with **no** API calls is **expert-only** and off by default.
+
+**Read this first (non-technical):** [`docs/SESSION_REUSE_USER_GUIDE.md`](docs/SESSION_REUSE_USER_GUIDE.md)
+
 ## Configuration
 
 - **Timeouts / per-agent models / context budget:** [`config.yaml`](config.yaml)
+- **Session reuse gates (word overlap, max age, zero-call opt-in):** [`config.yaml`](config.yaml) `session_reuse` and the user guide above
 - **Role instructions:** [`prompts/`](prompts/)
 - **Sampling intent vs CLI reality:** [`agent_configs.md`](agent_configs.md)
 

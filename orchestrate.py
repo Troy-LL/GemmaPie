@@ -8,8 +8,8 @@ Usage:
   python orchestrate.py --parallel "Question here"
 
 After each run, the Synthesizer's integrated answer is printed under FINAL ANSWER and saved as
-sessions/.../final_answer.txt (alongside report.md). Optional session_reuse (config, SESSION_REUSE=1,
-or --reuse-similar) can inject prior answers or short-circuit duplicate questions.
+sessions/.../final_answer.txt (alongside report.md). Optional session reuse: see
+docs/SESSION_REUSE_USER_GUIDE.md. Zero-call shortcut needs allow_zero_call_reuse or --allow-zero-call-reuse.
 """
 
 from __future__ import annotations
@@ -181,6 +181,14 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Override session_reuse.similarity_threshold (0.0-1.0, e.g. 0.92).",
     )
+    parser.add_argument(
+        "--allow-zero-call-reuse",
+        action="store_true",
+        help=(
+            "Expert only: allow mode short_circuit to copy a prior answer with zero Gemini calls. "
+            "See docs/SESSION_REUSE_USER_GUIDE.md; stale answers are possible."
+        ),
+    )
     args = parser.parse_args(argv)
 
     q_parts = [p for p in (args.question or []) if p.strip()]
@@ -225,12 +233,29 @@ def main(argv: list[str] | None = None) -> int:
     if reuse_mode_effective not in ("inject", "short_circuit", "off"):
         reuse_mode_effective = "inject"
 
+    allow_zero_call = bool(reuse_cfg.get("allow_zero_call_reuse", False)) or bool(
+        args.allow_zero_call_reuse
+    )
+    run_mode = reuse_mode_effective
+    if run_mode == "short_circuit" and not allow_zero_call:
+        print(
+            "\n[GemmaPie] Session reuse: `short_circuit` (copy old answer, zero API calls) is turned OFF "
+            "for safety — old answers can be wrong or mismatched.\n"
+            "Using **inject** instead if a prior session matches (full debate still runs).\n"
+            "Experts: set `allow_zero_call_reuse: true` in config.yaml or pass `--allow-zero-call-reuse`.\n"
+            "Everyone else: see docs/SESSION_REUSE_USER_GUIDE.md\n",
+            file=sys.stdout,
+        )
+        run_mode = "inject"
+
     sessions_root = root / "sessions"
     short_circuited = False
     prior_reference: str | None = None
     log_reuse = "none"
     matched_name: str | None = None
     matched_sim_log: float | None = None
+    matched_word_log: float | None = None
+    matched_age_days: float | None = None
     prior_q = ""
     summary: dict[str, Any] = {}
 
@@ -241,28 +266,44 @@ def main(argv: list[str] | None = None) -> int:
             else float(reuse_cfg.get("similarity_threshold", 0.88))
         )
         thr = max(0.0, min(1.0, thr))
+        min_wo = float(reuse_cfg.get("min_word_overlap", 0.14))
+        min_wo = max(0.0, min(1.0, min_wo))
+        raw_age = reuse_cfg.get("max_reuse_session_age_days", 14)
+        max_age: float | None
+        if raw_age is None:
+            max_age = None
+        else:
+            max_age = float(raw_age)
         max_prior = int(reuse_cfg.get("max_prior_chars", 8000))
-        match_path, match_sim, prior_q = session_cache.find_best_prior_session(
+        match = session_cache.find_best_prior_session(
             sessions_root=sessions_root,
             question=question,
             exclude_session=session_path,
             similarity_threshold=thr,
+            min_word_overlap=min_wo,
+            max_session_age_days=max_age,
         )
-        if match_path is not None:
+        if match.session_dir is not None:
+            match_path = match.session_dir
+            prior_q = match.prior_question
+            match_sim = match.char_similarity
             cached = session_cache.read_prior_integrated_answer(match_path)
             if cached:
                 matched_name = match_path.name
                 matched_sim_log = match_sim
-                if reuse_mode_effective == "short_circuit":
+                matched_word_log = match.word_overlap
+                matched_age_days = match.age_days
+                if run_mode == "short_circuit":
                     summary = _short_circuit_summary(question, match_path.name, match_sim, cached, cfg)
                     short_circuited = True
                     log_reuse = "short_circuit"
-                elif reuse_mode_effective == "inject":
+                elif run_mode == "inject":
                     prior_reference = session_cache.format_prior_reference_block(
                         prior_session=match_path,
                         prior_question=prior_q,
                         prior_answer=cached,
                         similarity=match_sim,
+                        word_overlap=match.word_overlap,
                         max_chars=max_prior,
                     )
                     log_reuse = "inject"
@@ -304,8 +345,10 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             print(
-                f"\n[session reuse] short_circuit — no Gemini calls. "
-                f"Prior: `{matched_name}` (~{matched_sim_log:.0%} question match).\n",
+                f"\n[session reuse] short_circuit — no Gemini calls (expert mode). "
+                f"Prior: `{matched_name}` (wording ~{matched_sim_log:.0%}, shared words ~{matched_word_log:.0%}; "
+                f"answer age ~{matched_age_days:.1f} days).\n"
+                "If anything important changed since that run, re-run with reuse off or use inject only.\n",
                 file=sys.stdout,
             )
             try:
@@ -315,6 +358,8 @@ def main(argv: list[str] | None = None) -> int:
                             "mode": "short_circuit",
                             "prior_session": matched_name,
                             "similarity": matched_sim_log,
+                            "word_overlap": matched_word_log,
+                            "prior_session_age_days": matched_age_days,
                             "prior_question_excerpt": prior_q[:2000],
                         },
                         indent=2,
@@ -329,7 +374,8 @@ def main(argv: list[str] | None = None) -> int:
                 "short_circuit_reuse",
                 (
                     f"_(No live agents ran. Reused integrated answer from `{matched_name}`; "
-                    f"question similarity ~{matched_sim_log:.0%}.)_\n\n"
+                    f"wording ~{matched_sim_log:.0%}, shared words ~{matched_word_log:.0%}; "
+                    f"answer ~{matched_age_days:.1f} days old.)_\n\n"
                 )
                 + synth_txt.strip()[:80000],
             )
@@ -340,8 +386,9 @@ def main(argv: list[str] | None = None) -> int:
 
         if log_reuse == "inject" and prior_reference and matched_name:
             print(
-                f"\n[session reuse] inject — prior `{matched_name}` (~{matched_sim_log:.0%}) "
-                "added to researcher context only.\n",
+                f"\n[session reuse] inject — prior `{matched_name}` added to researcher only "
+                f"(wording ~{matched_sim_log:.0%}, shared words ~{matched_word_log:.0%}; "
+                f"that answer is ~{matched_age_days:.1f} days old). Full debate still runs.\n",
                 file=sys.stdout,
             )
             try:
@@ -351,6 +398,8 @@ def main(argv: list[str] | None = None) -> int:
                             "mode": "inject",
                             "prior_session": matched_name,
                             "similarity": matched_sim_log,
+                            "word_overlap": matched_word_log,
+                            "prior_session_age_days": matched_age_days,
                         },
                         indent=2,
                     ),
@@ -398,6 +447,8 @@ def main(argv: list[str] | None = None) -> int:
         reuse_mode=log_reuse,
         matched_session=matched_name,
         similarity=matched_sim_log,
+        word_overlap=matched_word_log,
+        age_days=matched_age_days,
     )
 
     print(f"\nSession written to: {session_path}")

@@ -11,12 +11,13 @@ Judge- and developer-facing index. Paths are relative to the repository root.
 | [../plan.md](../plan.md) | Technical spec: goals, non-goals, architecture narrative |
 | [../README.md](../README.md) | Install, run commands, session artifacts |
 | [../DEMO_CHECKLIST.md](../DEMO_CHECKLIST.md) | Short demo recording checklist |
+| [SESSION_REUSE_USER_GUIDE.md](SESSION_REUSE_USER_GUIDE.md) | **Plain language:** session reuse, stale answers, safe defaults |
 
 ## Runtime configuration
 
 | File | Description |
 |------|-------------|
-| [../config.yaml](../config.yaml) | `model`, per-role `models:`, timeouts, `thinking.enabled`, pipeline flags |
+| [../config.yaml](../config.yaml) | `model`, per-role `models:`, timeouts, `thinking.enabled`, `session_reuse`, pipeline flags |
 
 ## External references
 
