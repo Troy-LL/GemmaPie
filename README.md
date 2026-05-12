@@ -13,7 +13,7 @@ Multi-agent **peer research** orchestrated in Python around the **Google Gemini 
 
 1. **Python 3.10+**
 2. **Google Gemini CLI** installed and on `PATH` as `gemini`, authenticated per [Authentication](https://google-gemini.github.io/gemini-cli/docs/get-started/authentication.html).
-3. Model ids your account can run. Set **`model`** (global default) and optional **`models:`** per role in [`config.yaml`](config.yaml). Shipped defaults use **`gemini-2.5-flash`** (aligned with current [Gemini CLI model docs](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/model.md); older ids like `gemini-2.0-flash` may return **404**). For **Gemma 4** tiers when your key lists them, see [`agent_configs.md`](agent_configs.md).
+3. Model ids your account can run. Set **`model`** and **`models:`** in [`config.yaml`](config.yaml). Defaults use a **heterogeneous Gemini 2.5** map (Flash / Flash-Lite / Pro); see **Gemini 2.5 & 3.x** tables in [`agent_configs.md`](agent_configs.md). Confirm names with **`gemini models list`** (preview ids change). For **Gemma** tiers when listed, see the same doc.
 
 ### Model verification (smoke)
 

@@ -1,18 +1,17 @@
 # Runtime configuration for `orchestrate.py` / `src.pipeline`
 #
 # Per-agent model ids for `gemini -m`. Use ids from `gemini models list` for your
-# auth (API key or Google account). For heterogeneous Gemma 4 tiers, see agent_configs.md.
+# auth (API key or Google account). Tier rationale: agent_configs.md (Gemini 2.5 / 3.x + Gemma).
 
-# Default stack: Gemini 2.5 Flash (matches current Gemini CLI “Auto 2.5” family; 2.0 ids may 404).
-# Use `gemini models list` and set ids exactly. Heavier roles can use gemini-2.5-pro if listed.
+# Heterogeneous Gemini 2.5 stack (stable). If lite/pro 404, set every role to gemini-2.5-flash.
 model: gemini-2.5-flash
 
 models:
   researcher: gemini-2.5-flash
-  skeptic: gemini-2.5-flash
+  skeptic: gemini-2.5-flash-lite
   contrarian: gemini-2.5-flash
-  reviewer: gemini-2.5-flash
-  synthesizer: gemini-2.5-flash
+  reviewer: gemini-2.5-pro
+  synthesizer: gemini-2.5-pro
 
 timeouts:
   researcher: 180
