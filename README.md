@@ -1,5 +1,7 @@
 # GemmaPie · Gemma 4 Distributed Cognition System
 
+**Repository:** [github.com/Troy-LL/GemmaPie](https://github.com/Troy-LL/GemmaPie)
+
 Multi-agent **peer research** orchestrated in Python around the **Google Gemini CLI** in headless JSON mode. Five roles (Researcher, Skeptic, Contrarian, Reviewer, Synthesizer) run sequentially—optionally with **parallel** Researcher+Skeptic on the first turn—share a session scratchpad, log **confidence disagreement**, optionally run a **one-step recursive** Researcher/Skeptic refinement, and emit **transparent session artifacts** (`report.md`, `transcript.md`, `audit.json`).
 
 **Tracks (hackathon framing):**
