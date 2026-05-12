@@ -1,16 +1,18 @@
 # Runtime configuration for `orchestrate.py` / `src.pipeline`
 #
-# Per-agent Gemma (or other) model ids for `-m`. See agent_configs.md for the
-# May 2026 catalog and tier rationale. Missing keys fall back to `model`.
+# Per-agent model ids for `gemini -m`. Use ids from `gemini models list` for your
+# auth (API key or Google account). For heterogeneous Gemma 4 tiers, see agent_configs.md.
 
-model: gemma-4-26b-a4b-it
+# Default stack: Gemini 2.0 Flash everywhere (works with typical Google-account CLI auth).
+# Swap roles to e.g. gemini-2.5-pro or gemini-1.5-pro once `gemini models list` shows them.
+model: gemini-2.0-flash
 
 models:
-  researcher: gemma-4-26b-a4b-it
-  skeptic: gemma-4-e4b-it
-  contrarian: gemma-4-26b-a4b-it
-  reviewer: gemma-4-31b-it
-  synthesizer: gemma-4-31b-it
+  researcher: gemini-2.0-flash
+  skeptic: gemini-2.0-flash
+  contrarian: gemini-2.0-flash
+  reviewer: gemini-2.0-flash
+  synthesizer: gemini-2.0-flash
 
 timeouts:
   researcher: 180
@@ -47,29 +49,27 @@ session_reuse:
 context:
   max_chars: 48000
 
+# --- API / quota pacing (Gemini CLI subprocesses). Tunes burstiness and soft 429 handling.
+# Defaults are conservative: small gaps between calls, no overlapping Researcher+Skeptic,
+# exponential backoff retries when stderr looks like quota / rate limit / 429.
+rate_limit:
+  min_interval_s: 0.35
+  max_concurrent: 1
+  max_retries_on_rate_limit: 4
+  retry_backoff_base_s: 5
+  retry_backoff_max_s: 90
+
 # --- Adaptive tier routing (see docs/ADAPTIVE_TIERS.md) ---
-# Runs only when enabled is true AND router is not off. CLI --adaptive overrides router (off forces off).
+# When enabled is true and router is not off, classifies the question (T0 trivial add, T1 short path, T2 full).
+# CLI --adaptive overrides router for this run; --adaptive off forces routing off.
 adaptive:
   enabled: false
   router: off
-  router_model: gemma-4-e4b-it
+  router_model: gemini-2.0-flash
   router_timeout: 30
   models_light:
-    researcher: gemma-4-e4b-it
-    synthesizer: gemma-4-e4b-it
+    researcher: gemini-2.0-flash
+    synthesizer: gemini-2.0-flash
   fallback_to_full: true
   max_trivial_add_digits: 6
   require_claims_for_t1_fallback: false
-
-# Adaptive tier routing (see docs/ADAPTIVE_TIERS.md). Defaults preserve legacy behavior (disabled).
-adaptive:
-  enabled: false
-  router: off
-  router_model: null
-  router_timeout: 30
-  models_light:
-    researcher: gemma-4-e4b-it
-    synthesizer: gemma-4-e4b-it
-  fallback_to_full: true
-  max_trivial_add_digits: 6
-  require_claims_for_t1_fallback: true

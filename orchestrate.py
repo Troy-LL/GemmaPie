@@ -24,7 +24,7 @@ from typing import Any
 
 import yaml
 
-from src import adaptive, reporting, scratchpad, session_cache
+from src import adaptive, gemini_runner, reporting, scratchpad, session_cache
 from src.dashboard import Dashboard
 from src.parsing import strip_synthesizer_claims_block
 from src.pipeline import parse_confidence, run_pipeline
@@ -213,6 +213,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Missing config: {cfg_path}", file=sys.stderr)
         return 2
     cfg = _load_cfg(cfg_path)
+    gemini_runner.apply_rate_limit_settings(cfg.get("rate_limit"))
+
     env_on = os.environ.get("SHOW_AGENT_THINKING", "").strip().lower() in ("1", "true", "yes")
     cfg_thinking = bool((cfg.get("thinking") or {}).get("enabled", False))
     if args.no_thinking:
@@ -520,6 +522,15 @@ def main(argv: list[str] | None = None) -> int:
         "  - optional *_thinking.txt when thinking mode is on"
     )
     errs = summary.get("errors") or []
+    if errs:
+        blob = "\n".join(str(e) for e in errs)
+        if "GEMINI_API_KEY" in blob or "GOOGLE_API_KEY" in blob:
+            print(
+                "\n[GemmaPie] Model steps failed: the Gemini CLI reported missing API credentials.\n"
+                "  Set GEMINI_API_KEY or GOOGLE_API_KEY in your environment (see .env.example), or authenticate\n"
+                "  per https://google-gemini.github.io/gemini-cli/docs/get-started/authentication.html\n",
+                file=sys.stderr,
+            )
     return 1 if errs else 0
 
 

@@ -18,6 +18,25 @@ UNCERTAINTY_RE = re.compile(
 _SKIP_T0 = "(Not invoked: adaptive tier T0.)"
 _SKIP_T1 = "(Not invoked: adaptive tier T1.)"
 
+# Windows CreateProcess command-line limit (~8191). Failure messages can embed
+# long CLI stderr; keep placeholders short so later agents (especially the
+# synthesizer) still fit when passed as `gemini -p "<huge string>"`.
+_FAILURE_SNIP_LEN = 700
+
+
+def _failure_placeholder(agent: str, msg: str) -> str:
+    m = (msg or "unknown error").strip()
+    if len(m) > _FAILURE_SNIP_LEN:
+        m = m[: _FAILURE_SNIP_LEN - 3] + "..."
+    return f"({agent} failed: {m})"
+
+
+def _max_concurrent_from_cfg(cfg: dict[str, Any]) -> int:
+    rl = cfg.get("rate_limit")
+    if not isinstance(rl, dict):
+        return 2
+    return max(1, int(rl.get("max_concurrent", 2) or 2))
+
 
 def parse_confidence(text: str) -> int | None:
     m = CONFIDENCE_RE.search(text)
@@ -212,6 +231,7 @@ def _run_full_pipeline_core(
                 pass
 
     errors: list[str] = []
+    max_concurrent = _max_concurrent_from_cfg(cfg)
 
     def invoke(agent: str, system_key: str, context_agent: str | None = None) -> dict[str, Any]:
         if manual_pause:
@@ -248,7 +268,7 @@ def _run_full_pipeline_core(
         else:
             msg = res.get("error") or "unknown error"
             errors.append(f"{agent}: {msg}")
-            outputs.setdefault(agent, f"({agent} failed: {msg})")
+            outputs.setdefault(agent, _failure_placeholder(agent, msg))
         res_out = dict(res)
         if show_thinking and thinking_outputs.get(agent):
             res_out["_thinking_preview"] = thinking_outputs[agent][:500]
@@ -280,67 +300,109 @@ def _run_full_pipeline_core(
             prior_reference=None,
         )
         fp_s = compose_full_prompt(prompts["skeptic"], task_ps)
-        if on_agent_start:
-            on_agent_start(
-                "__parallel__",
-                {
-                    "parallel": True,
-                    "branches": [
-                        {
-                            "agent": "researcher",
-                            "model": model_for("researcher"),
-                            "timeout_s": timeout_for("researcher"),
-                            "prompt_chars": len(fp_r),
-                        },
-                        {
-                            "agent": "skeptic",
-                            "model": model_for("skeptic"),
-                            "timeout_s": timeout_for("skeptic"),
-                            "prompt_chars": len(fp_s),
-                        },
-                    ],
-                    "show_thinking": bool(show_thinking),
-                },
-            )
 
-        def run_r() -> tuple[str, dict[str, Any]]:
-            res = gemini_runner.run_gemini(
+        def finish_parallel_agent(name: str, res: dict[str, Any]) -> None:
+            if res.get("ok") and res.get("text"):
+                commit_agent_output(name, str(res["text"]), res)
+                res_out = dict(res)
+                if show_thinking and thinking_outputs.get(name):
+                    res_out["_thinking_preview"] = thinking_outputs[name][:500]
+                if on_agent_done:
+                    on_agent_done(name, res_out)
+            else:
+                err = res.get("error") or "unknown error"
+                errors.append(f"{name}: {err}")
+                outputs.setdefault(name, _failure_placeholder(name, err))
+                res_out = dict(res)
+                if on_agent_done:
+                    on_agent_done(name, res_out)
+
+        if max_concurrent >= 2:
+            if on_agent_start:
+                on_agent_start(
+                    "__parallel__",
+                    {
+                        "parallel": True,
+                        "branches": [
+                            {
+                                "agent": "researcher",
+                                "model": model_for("researcher"),
+                                "timeout_s": timeout_for("researcher"),
+                                "prompt_chars": len(fp_r),
+                            },
+                            {
+                                "agent": "skeptic",
+                                "model": model_for("skeptic"),
+                                "timeout_s": timeout_for("skeptic"),
+                                "prompt_chars": len(fp_s),
+                            },
+                        ],
+                        "show_thinking": bool(show_thinking),
+                    },
+                )
+
+            def run_r() -> tuple[str, dict[str, Any]]:
+                res = gemini_runner.run_gemini(
+                    fp_r,
+                    model=model_for("researcher"),
+                    timeout=timeout_for("researcher"),
+                    cwd=session_path,
+                )
+                return "researcher", res
+
+            def run_s() -> tuple[str, dict[str, Any]]:
+                res = gemini_runner.run_gemini(
+                    fp_s,
+                    model=model_for("skeptic"),
+                    timeout=timeout_for("skeptic"),
+                    cwd=session_path,
+                )
+                return "skeptic", res
+
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                futs = [ex.submit(run_r), ex.submit(run_s)]
+                for fut in as_completed(futs):
+                    name, res = fut.result()
+                    finish_parallel_agent(name, res)
+        else:
+            # Same parallel-mode prompts (Skeptic does not see Researcher), but one
+            # subprocess at a time when rate_limit.max_concurrent is 1.
+            if on_agent_start:
+                on_agent_start(
+                    "researcher",
+                    {
+                        "model": model_for("researcher"),
+                        "timeout_s": timeout_for("researcher"),
+                        "show_thinking": bool(show_thinking),
+                        "prompt_chars": len(fp_r),
+                        "parallel_initial_sequential": True,
+                    },
+                )
+            res_r = gemini_runner.run_gemini(
                 fp_r,
                 model=model_for("researcher"),
                 timeout=timeout_for("researcher"),
                 cwd=session_path,
             )
-            return "researcher", res
-
-        def run_s() -> tuple[str, dict[str, Any]]:
-            res = gemini_runner.run_gemini(
+            finish_parallel_agent("researcher", res_r)
+            if on_agent_start:
+                on_agent_start(
+                    "skeptic",
+                    {
+                        "model": model_for("skeptic"),
+                        "timeout_s": timeout_for("skeptic"),
+                        "show_thinking": bool(show_thinking),
+                        "prompt_chars": len(fp_s),
+                        "parallel_initial_sequential": True,
+                    },
+                )
+            res_s = gemini_runner.run_gemini(
                 fp_s,
                 model=model_for("skeptic"),
                 timeout=timeout_for("skeptic"),
                 cwd=session_path,
             )
-            return "skeptic", res
-
-        with ThreadPoolExecutor(max_workers=2) as ex:
-            futs = [ex.submit(run_r), ex.submit(run_s)]
-            for fut in as_completed(futs):
-                name, res = fut.result()
-                if res.get("ok") and res.get("text"):
-                    commit_agent_output(name, str(res["text"]), res)
-                    res_out = dict(res)
-                    if show_thinking and thinking_outputs.get(name):
-                        res_out["_thinking_preview"] = thinking_outputs[name][:500]
-                    if on_agent_done:
-                        on_agent_done(name, res_out)
-                else:
-                    errors.append(f"{name}: {res.get('error') or 'unknown error'}")
-                    outputs.setdefault(
-                        name,
-                        f"({name} failed: {res.get('error') or 'unknown error'})",
-                    )
-                    res_out = dict(res)
-                    if on_agent_done:
-                        on_agent_done(name, res_out)
+            finish_parallel_agent("skeptic", res_s)
         if "researcher" not in outputs:
             errors.append("researcher failed in parallel mode; aborting early.")
         if "skeptic" not in outputs:
@@ -663,7 +725,7 @@ def run_pipeline(
         else:
             msg = res.get("error") or "unknown error"
             errors_t1.append(f"{agent}: {msg}")
-            outputs_t1.setdefault(agent, f"({agent} failed: {msg})")
+            outputs_t1.setdefault(agent, _failure_placeholder(agent, msg))
         res_out = dict(res)
         if eff_show and thinking_t1.get(agent):
             res_out["_thinking_preview"] = thinking_t1[agent][:500]

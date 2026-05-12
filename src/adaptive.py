@@ -79,7 +79,7 @@ def classify_slm(question: str, cfg: dict[str, Any], session_path: Path) -> Clas
         adapt = {}
     raw_model = adapt.get("router_model")
     if raw_model is None or (isinstance(raw_model, str) and not raw_model.strip()):
-        raw_model = cfg.get("model") or "gemma-4-e4b-it"
+        raw_model = cfg.get("model") or "gemini-2.0-flash"
     router_model = str(raw_model).strip()
     timeout = float(adapt.get("router_timeout", 30))
     prompt = (

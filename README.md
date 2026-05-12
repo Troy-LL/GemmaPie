@@ -13,7 +13,7 @@ Multi-agent **peer research** orchestrated in Python around the **Google Gemini 
 
 1. **Python 3.10+**
 2. **Google Gemini CLI** installed and on `PATH` as `gemini`, authenticated per [Authentication](https://google-gemini.github.io/gemini-cli/docs/get-started/authentication.html).
-3. Model ids your account can run. Set **`model`** (global default) and optional **`models:`** per role in [`config.yaml`](config.yaml). Defaults target **heterogeneous Gemma 4** tiers (see tables in [`agent_configs.md`](agent_configs.md)). Use **Gemma 3** or a single shared `model` if quota or VRAM is tight.
+3. Model ids your account can run. Set **`model`** (global default) and optional **`models:`** per role in [`config.yaml`](config.yaml). The shipped defaults use **`gemini-2.0-flash`** (typical **Google-account** Gemini CLI auth). For **Gemma 4** heterogeneous tiers when your key supports them, see [`agent_configs.md`](agent_configs.md).
 
 ### Model verification (smoke)
 
@@ -55,6 +55,8 @@ python orchestrate.py --manual "Does social media harm teenagers?"
 ```bash
 python orchestrate.py --parallel "Is nuclear energy safe?"
 ```
+
+**API pacing** (optional `rate_limit` in [`config.yaml`](config.yaml)): spaces out `gemini` subprocess starts, caps concurrent calls (`max_concurrent: 1` runs Researcher then Skeptic even with `--parallel`, preserving parallel *prompt* semantics), and retries with exponential backoff when stderr looks like **429 / quota / throttle**. Defaults are tuned to be gentle on a single API key; set `min_interval_s: 0` and `max_concurrent: 2` to approximate the old burstier behavior.
 
 **Adaptive tiers** (optional cost/latency routing: trivial add → T0, optional SLM router → T1 light path, else full T2). Read [`docs/ADAPTIVE_TIERS.md`](docs/ADAPTIVE_TIERS.md), enable `adaptive.enabled` in [`config.yaml`](config.yaml), or override for one run:
 
@@ -102,7 +104,7 @@ GemmaPie can **reuse past sessions** to save work. Matching uses **similar wordi
 
 ## Configuration
 
-- **Timeouts / per-agent models / context budget:** [`config.yaml`](config.yaml)
+- **Timeouts / per-agent models / context budget / API pacing:** [`config.yaml`](config.yaml) (`rate_limit` reduces burst traffic to the CLI)
 - **Adaptive tier routing (T0/T1/T2):** [`config.yaml`](config.yaml) `adaptive` and [`docs/ADAPTIVE_TIERS.md`](docs/ADAPTIVE_TIERS.md)
 - **Session reuse gates (word overlap, max age, zero-call opt-in):** [`config.yaml`](config.yaml) `session_reuse` and the user guide above
 - **Role instructions:** [`prompts/`](prompts/)
@@ -115,6 +117,8 @@ GemmaPie can **reuse past sessions** to save work. Matching uses **similar wordi
 | `` `gemini` exited with code 130 `` | Often **interrupt** (Ctrl+C / SIGINT) or the CLI aborting mid-run. Avoid sending a second interrupt while a step is running. With the updated runner, Ctrl+C should **kill the child `gemini` process** instead of hanging in `communicate`. |
 | `Ripgrep is not available` in stderr | Install [Ripgrep](https://github.com/BurntSushi/ripgrep/releases) so `rg` is on `PATH`, or follow [Gemini CLI](https://github.com/google-gemini/gemini-cli) issues for Windows ripgrep detection. The CLI may warn or degrade search without it. |
 | Rich Live + extra console quirks | Each `gemini` call uses `CREATE_NO_WINDOW` on Windows and **`cwd` = the session folder** (not the whole repo) so the CLI indexes a small workspace. |
+| `` `gemini` exited with code 41 `` + “must specify … API_KEY” | Set **`GEMINI_API_KEY`** or **`GOOGLE_API_KEY`** (see [`.env.example`](.env.example)) or run the CLI [authentication](https://google-gemini.github.io/gemini-cli/docs/get-started/authentication.html) flow. Until this works, `report.md` will show every agent as failed and the **FINAL ANSWER** block will say no integrated answer was produced. |
+| Quota / 429 / “rate limit” / `TerminalQuotaError` | The run uses [`config.yaml`](config.yaml) **`rate_limit`** (retries + backoff). Raise limits in Google AI Studio / billing, reduce agents (e.g. adaptive T1), use lighter models, or increase `min_interval_s` / lower concurrency. |
 
 ## Anchor demo (video)
 
