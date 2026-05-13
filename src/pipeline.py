@@ -10,6 +10,9 @@ from . import adaptive, context, gemini_runner, scratchpad
 from .parsing import extract_native_thoughts_from_raw, split_thinking_body
 
 
+# Passed to the dashboard / optional stderr echo after each step (not streamed mid-call).
+_THINKING_PREVIEW_CHARS = 8000
+
 CONFIDENCE_RE = re.compile(r"Confidence:\s*(\d+)\s*/\s*10", re.IGNORECASE)
 UNCERTAINTY_RE = re.compile(
     r"Key uncertainty:\s*(.+?)(?:\n|$)", re.IGNORECASE | re.DOTALL
@@ -271,7 +274,7 @@ def _run_full_pipeline_core(
             outputs.setdefault(agent, _failure_placeholder(agent, msg))
         res_out = dict(res)
         if show_thinking and thinking_outputs.get(agent):
-            res_out["_thinking_preview"] = thinking_outputs[agent][:500]
+            res_out["_thinking_preview"] = thinking_outputs[agent][:_THINKING_PREVIEW_CHARS]
         if on_agent_done:
             on_agent_done(agent, res_out)
         return res
@@ -306,7 +309,7 @@ def _run_full_pipeline_core(
                 commit_agent_output(name, str(res["text"]), res)
                 res_out = dict(res)
                 if show_thinking and thinking_outputs.get(name):
-                    res_out["_thinking_preview"] = thinking_outputs[name][:500]
+                    res_out["_thinking_preview"] = thinking_outputs[name][:_THINKING_PREVIEW_CHARS]
                 if on_agent_done:
                     on_agent_done(name, res_out)
             else:
@@ -728,7 +731,7 @@ def run_pipeline(
             outputs_t1.setdefault(agent, _failure_placeholder(agent, msg))
         res_out = dict(res)
         if eff_show and thinking_t1.get(agent):
-            res_out["_thinking_preview"] = thinking_t1[agent][:500]
+            res_out["_thinking_preview"] = thinking_t1[agent][:_THINKING_PREVIEW_CHARS]
         if on_agent_done:
             on_agent_done(agent, res_out)
         return res

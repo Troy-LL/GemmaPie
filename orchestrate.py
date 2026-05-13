@@ -19,6 +19,9 @@ import argparse
 import json
 import os
 import sys
+import threading
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -168,6 +171,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Disable thinking trace output for this run.",
     )
     parser.add_argument(
+        "--echo-thinking",
+        action="store_true",
+        help=(
+            "After each agent step, print parsed thinking to stderr (same text as the dashboard panel). "
+            "Still no live streaming while gemini runs."
+        ),
+    )
+    parser.add_argument(
         "--reuse-similar",
         action="store_true",
         help="Enable prior-session reuse (see session_reuse in config.yaml, or SESSION_REUSE=1).",
@@ -216,13 +227,22 @@ def main(argv: list[str] | None = None) -> int:
     gemini_runner.apply_rate_limit_settings(cfg.get("rate_limit"))
 
     env_on = os.environ.get("SHOW_AGENT_THINKING", "").strip().lower() in ("1", "true", "yes")
-    cfg_thinking = bool((cfg.get("thinking") or {}).get("enabled", False))
+    thinking_yaml = cfg.get("thinking") or {}
+    if not isinstance(thinking_yaml, dict):
+        thinking_yaml = {}
+    cfg_thinking = bool(thinking_yaml.get("enabled", False))
     if args.no_thinking:
         eff_thinking = False
     elif args.show_thinking:
         eff_thinking = True
     else:
         eff_thinking = cfg_thinking or env_on
+
+    echo_thinking = (
+        bool(thinking_yaml.get("echo_terminal", False))
+        or os.environ.get("ECHO_AGENT_THINKING", "").strip().lower() in ("1", "true", "yes")
+        or bool(args.echo_thinking)
+    )
 
     prompts_dir = root / str(cfg.get("paths", {}).get("prompts_dir", "prompts"))
     if not prompts_dir.is_dir():
@@ -335,15 +355,102 @@ def main(argv: list[str] | None = None) -> int:
         dashboard = Dashboard()
         dash_ctx = dashboard.__enter__()
 
+    step_started_at: dict[str, float] = {}
+    step_watchdog_stop: dict[str, threading.Event] = {}
+
     try:
+        parallel_pending_branches = 0
+
+        def _ts() -> str:
+            return datetime.now().strftime("%H:%M:%S")
+
+        def _start_watchdog(agent: str, interval_s: float = 12.0) -> None:
+            # Plain-log heartbeat when dashboard is off. With Rich Live on, the dashboard
+            # tick thread updates elapsed time; printing here fights the Live panel.
+            if dashboard is not None and not args.no_dashboard:
+                return
+            stop = threading.Event()
+            step_watchdog_stop[agent] = stop
+
+            def _runner() -> None:
+                while not stop.wait(interval_s):
+                    started = step_started_at.get(agent)
+                    if isinstance(started, (int, float)):
+                        elapsed = time.monotonic() - started
+                        print(
+                            f"[{_ts()}] ... {agent} still running | elapsed={elapsed:.1f}s",
+                            file=sys.stdout,
+                            flush=True,
+                        )
+
+            t = threading.Thread(target=_runner, name=f"watchdog-{agent}", daemon=True)
+            t.start()
+
+        def _stop_watchdog(agent: str) -> None:
+            stop = step_watchdog_stop.pop(agent, None)
+            if stop:
+                stop.set()
 
         def on_start(agent: str, meta: dict[str, Any]) -> None:
+            nonlocal parallel_pending_branches
+            step_started_at[agent] = time.monotonic()
+            model = str(meta.get("model") or "?")
+            timeout_s = meta.get("timeout_s")
+            timeout_label = f"{timeout_s}s" if isinstance(timeout_s, (int, float)) else "?"
+            print(
+                f"[{_ts()}] START {agent} | model={model} timeout={timeout_label}",
+                file=sys.stdout,
+                flush=True,
+            )
+            if agent == "__parallel__":
+                branches = meta.get("branches")
+                if isinstance(branches, list):
+                    parallel_pending_branches = len(branches)
+            _start_watchdog(agent)
             if dashboard:
                 dashboard.set_agent_run(agent, meta)
 
         def on_done(agent: str, res: dict) -> None:
+            nonlocal parallel_pending_branches
+            started = step_started_at.pop(agent, None)
+            elapsed = (
+                f"{time.monotonic() - started:.1f}s"
+                if isinstance(started, (int, float))
+                else "?"
+            )
+            status = "OK" if bool(res.get("ok")) else "ERR"
+            err = str(res.get("error") or "").strip()
+            suffix = f" | {err[:180]}" if err else ""
+            print(
+                f"[{_ts()}] DONE  {agent} | status={status} elapsed={elapsed}{suffix}",
+                file=sys.stdout,
+                flush=True,
+            )
+            _stop_watchdog(agent)
+            # In parallel-first mode we start "__parallel__" once and receive done
+            # callbacks for each branch agent separately.
+            if agent in ("researcher", "skeptic") and "__parallel__" in step_watchdog_stop:
+                if parallel_pending_branches > 0:
+                    parallel_pending_branches -= 1
+                if parallel_pending_branches <= 0:
+                    _stop_watchdog("__parallel__")
+                    step_started_at.pop("__parallel__", None)
             if dashboard:
                 dashboard.record_result(agent, res)
+
+            if echo_thinking and eff_thinking:
+                tip = res.get("_thinking_preview")
+                if isinstance(tip, str) and tip.strip():
+                    fp = session_path / f"{agent}_thinking.txt"
+                    cap = 9000
+                    body = tip.strip()
+                    if len(body) > cap:
+                        body = body[:cap] + "\n… (truncated; see " + fp.name + ")"
+                    print(
+                        f"\n--- Thinking · {agent} (full file: {fp.name}) ---\n{body}\n",
+                        file=sys.stderr,
+                        flush=True,
+                    )
 
         if not short_circuited:
             acfg = cfg.get("adaptive") or {}
@@ -387,6 +494,12 @@ def main(argv: list[str] | None = None) -> int:
                     adaptive_meta["t0_a"] = h.t0_a
                     adaptive_meta["t0_b"] = h.t0_b
                     adaptive_meta["t0_sum"] = h.t0_sum
+
+            if dashboard:
+                if run_adaptive:
+                    dashboard.set_adaptive_route(adaptive_tier, adaptive_meta)
+                else:
+                    dashboard.set_adaptive_route(None, None)
 
             summary = run_pipeline(
                 root=root,
@@ -495,6 +608,10 @@ def main(argv: list[str] | None = None) -> int:
             dashboard.set_preview(f"Session: {session_path}")
 
     finally:
+        # Stop any stdout watchdog threads (dashboard mode skips these threads entirely).
+        for ev in list(step_watchdog_stop.values()):
+            ev.set()
+        step_watchdog_stop.clear()
         if dash_ctx is not None and dashboard is not None:
             dashboard.__exit__(None, None, None)
 

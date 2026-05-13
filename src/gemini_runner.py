@@ -10,6 +10,10 @@ import time
 from pathlib import Path
 from typing import Any
 
+# Windows `CreateProcess` command-line limits vary by wrapper; staying under ~8k chars
+# avoids "The command line is too long." Gemini `-p` puts the full prompt in argv — use stdin instead.
+_WIN_CMD_SAFE_argv_prompt_chars = 7000
+
 _RL_LOCK = threading.Lock()
 _SEM: threading.Semaphore | None = None
 _last_popen_monotonic: float = 0.0
@@ -91,6 +95,22 @@ def _is_rate_limit_failure(res: dict[str, Any]) -> bool:
     return any(n in blob for n in needles)
 
 
+def _approx_cmdline_len(cmd: list[str]) -> int:
+    """Rough byte length of the command line as passed to CreateProcess (Windows-safe estimate)."""
+    return sum(len(str(a)) + 1 for a in cmd) + 8
+
+
+def _prompt_via_stdin(*, exe: str, model: str, prompt: str) -> bool:
+    """Use stdin for the prompt when argv would exceed OS / CLI limits (esp. Windows)."""
+    cmd_argv = [exe, "-p", prompt, "--output-format", "json", "-m", model]
+    if sys.platform == "win32":
+        if len(prompt) >= _WIN_CMD_SAFE_argv_prompt_chars:
+            return True
+        return _approx_cmdline_len(cmd_argv) >= 7800
+    # Non-Windows: still guard extreme prompts.
+    return len(prompt) >= 120_000 or _approx_cmdline_len(cmd_argv) >= 900_000
+
+
 def _run_gemini_subprocess(
     prompt: str,
     *,
@@ -99,15 +119,14 @@ def _run_gemini_subprocess(
     cwd: Path | None,
     exe: str,
 ) -> dict[str, Any]:
-    cmd: list[str] = [
-        exe,
-        "-p",
-        prompt,
-        "--output-format",
-        "json",
-        "-m",
-        model,
-    ]
+    stdin_mode = _prompt_via_stdin(exe=exe, model=model, prompt=prompt)
+    # Headless mode: `-p` is required; docs say stdin is appended to the prompt — empty `-p`
+    # keeps argv tiny while the full prompt is sent on stdin only.
+    cmd: list[str] = (
+        [exe, "-p", "", "--output-format", "json", "-m", model]
+        if stdin_mode
+        else [exe, "-p", prompt, "--output-format", "json", "-m", model]
+    )
 
     popen_kw: dict[str, Any] = {
         "stdout": subprocess.PIPE,
@@ -116,6 +135,8 @@ def _run_gemini_subprocess(
         "cwd": str(cwd) if cwd else None,
         "shell": False,
     }
+    if stdin_mode:
+        popen_kw["stdin"] = subprocess.PIPE
     if sys.platform == "win32":
         popen_kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -123,7 +144,10 @@ def _run_gemini_subprocess(
     try:
         proc = subprocess.Popen(cmd, **popen_kw)
         assert proc.stdout is not None and proc.stderr is not None
-        stdout, stderr = proc.communicate(timeout=timeout)
+        if stdin_mode:
+            stdout, stderr = proc.communicate(input=prompt, timeout=timeout)
+        else:
+            stdout, stderr = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         if proc is not None:
             proc.kill()

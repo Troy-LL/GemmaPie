@@ -3,20 +3,21 @@
 # Per-agent model ids for `gemini -m`. Use ids from `gemini models list` for your
 # auth (API key or Google account). Tier rationale: agent_configs.md (Gemini 2.5 / 3.x + Gemma).
 
-# Heterogeneous Gemini 2.5 stack (stable). If lite/pro 404, set every role to gemini-2.5-flash.
-model: gemini-2.5-flash
+# Default Gemini 3.x heterogeneous stack (preview ids — confirm with `gemini models list`).
+# If any id 404s, fall back to gemini-2.5-flash for every role (see README troubleshooting).
+model: gemini-3-flash-preview
 
 models:
-  researcher: gemini-2.5-flash
-  skeptic: gemini-2.5-flash-lite
-  contrarian: gemini-2.5-flash
-  reviewer: gemini-2.5-pro
-  synthesizer: gemini-2.5-pro
+  researcher: gemini-3-flash-preview
+  skeptic: gemini-3.1-flash-lite
+  contrarian: gemini-3-flash-preview
+  reviewer: gemini-3.1-pro-preview
+  synthesizer: gemini-3.1-pro-preview
 
 timeouts:
   researcher: 180
   skeptic: 180
-  contrarian: 180
+  contrarian: 240
   reviewer: 240
   synthesizer: 300
   default: 180
@@ -29,8 +30,10 @@ pipeline:
   parallel_initial: false
 
 # When true (or SHOW_AGENT_THINKING=1, or --show-thinking), write *_thinking.txt and include traces in report/transcript.
+# echo_terminal: print the same parsed thinking to stderr after each agent (useful with --no-dashboard or logging).
 thinking:
-  enabled: false
+  enabled: true
+  echo_terminal: false
 
 # --- Session reuse (read docs/SESSION_REUSE_USER_GUIDE.md first) ---
 # Matching is lexical (wording), not "AI understanding." Use inject for safe defaults.
@@ -61,14 +64,15 @@ rate_limit:
 # --- Adaptive tier routing (see docs/ADAPTIVE_TIERS.md) ---
 # When enabled is true and router is not off, classifies the question (T0 trivial add, T1 short path, T2 full).
 # CLI --adaptive overrides router for this run; --adaptive off forces routing off.
+# Note: contested questions (e.g. policy debates) usually classify as T2 — full heterogeneous stack below.
 adaptive:
-  enabled: false
-  router: off
-  router_model: gemini-2.5-flash
+  enabled: true
+  router: heuristic_then_slm
+  router_model: gemini-3-flash-preview
   router_timeout: 30
   models_light:
-    researcher: gemini-2.5-flash
-    synthesizer: gemini-2.5-flash
+    researcher: gemini-3-flash-preview
+    synthesizer: gemini-3-flash-preview
   fallback_to_full: true
   max_trivial_add_digits: 6
   require_claims_for_t1_fallback: false
