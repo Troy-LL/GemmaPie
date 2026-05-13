@@ -27,7 +27,7 @@ from typing import Any
 
 import yaml
 
-from src import adaptive, gemini_runner, reporting, scratchpad, session_cache
+from src import adaptive, context, gemini_runner, reporting, scratchpad, session_cache
 from src.dashboard import Dashboard
 from src.parsing import strip_synthesizer_claims_block
 from src.pipeline import parse_confidence, run_pipeline
@@ -212,6 +212,15 @@ def main(argv: list[str] | None = None) -> int:
             "config `adaptive.router`. See docs/ADAPTIVE_TIERS.md."
         ),
     )
+    parser.add_argument(
+        "--kb",
+        action="append",
+        default=[],
+        help=(
+            "Knowledge-base path (file or directory). Repeat --kb for multiple paths. "
+            "Relative paths resolve from repo root."
+        ),
+    )
     args = parser.parse_args(argv)
 
     q_parts = [p for p in (args.question or []) if p.strip()]
@@ -252,6 +261,39 @@ def main(argv: list[str] | None = None) -> int:
     session_id = scratchpad.new_session_id()
     session_path = scratchpad.ensure_session_layout(root, session_id)
     (session_path / "question.txt").write_text(question + "\n", encoding="utf-8")
+
+    kb_cfg = cfg.get("knowledge_base") or {}
+    if not isinstance(kb_cfg, dict):
+        kb_cfg = {}
+    kb_cfg_paths = kb_cfg.get("paths") or []
+    if not isinstance(kb_cfg_paths, list):
+        kb_cfg_paths = []
+    cli_kb_paths = [str(p) for p in (args.kb or []) if str(p).strip()]
+    kb_entries = [str(p) for p in kb_cfg_paths] + cli_kb_paths
+    kb_enabled = bool(kb_cfg.get("enabled", False)) or bool(cli_kb_paths)
+    kb_ref = ""
+    kb_used_files: list[str] = []
+    kb_roles: set[str] | None = None
+    kb_roles_cfg = kb_cfg.get("roles")
+    if isinstance(kb_roles_cfg, list):
+        kb_roles = {str(x).strip().lower() for x in kb_roles_cfg if str(x).strip()}
+        if not kb_roles:
+            kb_roles = None
+    if kb_enabled and kb_entries:
+        kb_max = int(kb_cfg.get("max_chars", 16000))
+        kb_exts = kb_cfg.get("include_extensions") or [".md", ".txt"]
+        kb_ref, kb_used_files = context.build_knowledge_reference(
+            root=root,
+            entries=kb_entries,
+            max_chars=kb_max,
+            allowed_exts=kb_exts,
+        )
+        context.write_knowledge_sources_json(session_path, kb_used_files)
+        if kb_ref.strip():
+            try:
+                (session_path / "knowledge_context.md").write_text(kb_ref, encoding="utf-8")
+            except OSError:
+                pass
 
     parallel = bool(args.parallel or cfg.get("pipeline", {}).get("parallel_initial"))
 
@@ -513,6 +555,8 @@ def main(argv: list[str] | None = None) -> int:
                 on_agent_done=on_done,
                 show_thinking=eff_thinking,
                 prior_reference=prior_reference,
+                knowledge_reference=kb_ref or None,
+                knowledge_roles=kb_roles,
                 adaptive_tier=adaptive_tier,
                 adaptive_meta=adaptive_meta,
             )
@@ -636,8 +680,11 @@ def main(argv: list[str] | None = None) -> int:
         "  - sessions/topic_log.jsonl (append-only run index)\n"
         "  - report.md\n  - transcript.md\n  - audit.json\n  - disagreements.json\n"
         "  - models_used.json\n  - scratchpad.md\n  - shared_facts.md\n"
-        "  - optional *_thinking.txt when thinking mode is on"
+        "  - optional *_thinking.txt when thinking mode is on\n"
+        "  - optional knowledge_context.md / knowledge_sources.json when KB context is enabled"
     )
+    if kb_used_files:
+        print(f"  - knowledge files loaded: {len(kb_used_files)}")
     errs = summary.get("errors") or []
     if errs:
         blob = "\n".join(str(e) for e in errs)

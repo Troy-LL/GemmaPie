@@ -145,6 +145,8 @@ def _run_full_pipeline_core(
     on_agent_done: Callable[[str, dict[str, Any]], None] | None = None,
     show_thinking: bool | None = None,
     prior_reference: str | None = None,
+    knowledge_reference: str | None = None,
+    knowledge_roles: set[str] | None = None,
     tier_locked_t2: bool = False,
     adaptive_light: bool = False,
 ) -> dict[str, Any]:
@@ -236,6 +238,13 @@ def _run_full_pipeline_core(
     errors: list[str] = []
     max_concurrent = _max_concurrent_from_cfg(cfg)
 
+    def kb_for(agent_name: str) -> str | None:
+        if not knowledge_reference:
+            return None
+        if not knowledge_roles:
+            return knowledge_reference
+        return knowledge_reference if agent_name.lower() in knowledge_roles else None
+
     def invoke(agent: str, system_key: str, context_agent: str | None = None) -> dict[str, Any]:
         if manual_pause:
             manual_pause(agent)
@@ -248,6 +257,7 @@ def _run_full_pipeline_core(
             max_chars=max_chars,
             parallel_initial=parallel_initial and agent in {"researcher", "skeptic"},
             prior_reference=prior_reference,
+            knowledge_reference=kb_for(ctx_agent),
         )
         full_prompt = compose_full_prompt(prompts[system_key], task)
         if on_agent_start:
@@ -291,6 +301,7 @@ def _run_full_pipeline_core(
             max_chars=max_chars,
             parallel_initial=True,
             prior_reference=prior_reference,
+            knowledge_reference=kb_for("researcher"),
         )
         fp_r = compose_full_prompt(prompts["researcher"], task_pr)
         task_ps = context.build_context_for(
@@ -301,6 +312,7 @@ def _run_full_pipeline_core(
             max_chars=max_chars,
             parallel_initial=True,
             prior_reference=None,
+            knowledge_reference=kb_for("skeptic"),
         )
         fp_s = compose_full_prompt(prompts["skeptic"], task_ps)
 
@@ -479,6 +491,8 @@ def run_pipeline(
     on_agent_done: Callable[[str, dict[str, Any]], None] | None = None,
     show_thinking: bool | None = None,
     prior_reference: str | None = None,
+    knowledge_reference: str | None = None,
+    knowledge_roles: set[str] | None = None,
     adaptive_tier: str | None = None,
     adaptive_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -508,6 +522,8 @@ def run_pipeline(
             on_agent_done=on_agent_done,
             show_thinking=show_thinking,
             prior_reference=prior_reference,
+            knowledge_reference=knowledge_reference,
+            knowledge_roles=knowledge_roles,
             tier_locked_t2=False,
             adaptive_light=False,
         )
@@ -544,6 +560,8 @@ def run_pipeline(
                 on_agent_done=on_agent_done,
                 show_thinking=show_thinking,
                 prior_reference=prior_reference,
+                knowledge_reference=knowledge_reference,
+                knowledge_roles=knowledge_roles,
                 tier_locked_t2=False,
                 adaptive_light=False,
             )
@@ -615,6 +633,8 @@ def run_pipeline(
             on_agent_done=on_agent_done,
             show_thinking=show_thinking,
             prior_reference=prior_reference,
+            knowledge_reference=knowledge_reference,
+            knowledge_roles=knowledge_roles,
             tier_locked_t2=False,
             adaptive_light=False,
         )
@@ -705,6 +725,14 @@ def run_pipeline(
             max_chars=max_chars,
             parallel_initial=False,
             prior_reference=prior_reference,
+            knowledge_reference=(
+                knowledge_reference
+                if (
+                    not knowledge_roles
+                    or ctx_agent.lower() in knowledge_roles
+                )
+                else None
+            ),
         )
         full_prompt = compose_full_prompt(prompts[system_key], task)
         if on_agent_start:
@@ -779,6 +807,8 @@ def run_pipeline(
             on_agent_done=on_agent_done,
             show_thinking=show_thinking,
             prior_reference=prior_reference,
+            knowledge_reference=knowledge_reference,
+            knowledge_roles=knowledge_roles,
             tier_locked_t2=True,
             adaptive_light=False,
         )

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import Mapping
+from typing import Iterable, Mapping
 
 from . import scratchpad
 
@@ -25,6 +26,127 @@ def _q(question: str, max_chars: int) -> str:
     return trim_to_budget(question.strip(), min(max_chars // 3, 8000))
 
 
+def _read_text_safe(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        try:
+            return path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+    except OSError:
+        return ""
+
+
+def _norm_exts(exts: Iterable[str] | None) -> set[str]:
+    out: set[str] = set()
+    for e in exts or (".md", ".txt"):
+        s = str(e).strip().lower()
+        if not s:
+            continue
+        if not s.startswith("."):
+            s = "." + s
+        out.add(s)
+    return out or {".md", ".txt"}
+
+
+def _iter_kb_files(entry: Path, allowed_exts: set[str]) -> list[Path]:
+    if entry.is_file():
+        if entry.suffix.lower() in allowed_exts:
+            return [entry]
+        return []
+    if not entry.is_dir():
+        return []
+    out: list[Path] = []
+    for p in sorted(entry.rglob("*")):
+        if p.is_file() and p.suffix.lower() in allowed_exts:
+            out.append(p)
+    return out
+
+
+def _pretty_rel(path: Path, root: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(root.resolve()))
+    except Exception:
+        return str(path)
+
+
+def build_knowledge_reference(
+    *,
+    root: Path,
+    entries: Iterable[str],
+    max_chars: int,
+    allowed_exts: Iterable[str] | None = None,
+) -> tuple[str, list[str]]:
+    """
+    Build a bounded context block from user-provided files/folders.
+
+    Returns:
+      - markdown/reference block for prompts
+      - list of file paths actually included (for session audit)
+    """
+    if max_chars <= 0:
+        return "", []
+    exts = _norm_exts(allowed_exts)
+    candidates: list[Path] = []
+    seen: set[str] = set()
+    for raw in entries:
+        s = str(raw).strip()
+        if not s:
+            continue
+        p = Path(s).expanduser()
+        if not p.is_absolute():
+            p = (root / p).resolve()
+        files = _iter_kb_files(p, exts)
+        for fp in files:
+            key = str(fp.resolve()).lower()
+            if key not in seen:
+                seen.add(key)
+                candidates.append(fp)
+
+    if not candidates:
+        return "", []
+
+    lines = ["### User-provided knowledge base (reference context)"]
+    used: list[str] = []
+    # Keep room for headers/footer.
+    budget_left = max(0, max_chars - 180)
+    for fp in candidates:
+        if budget_left <= 120:
+            break
+        body = _read_text_safe(fp).strip()
+        if not body:
+            continue
+        rel = _pretty_rel(fp, root)
+        header = f"\n#### Source: {rel}\n"
+        if len(header) >= budget_left:
+            break
+        budget_left -= len(header)
+        piece = body if len(body) <= budget_left else body[: max(0, budget_left - 28)] + "\n...[truncated]"
+        lines.append(header + piece)
+        used.append(rel)
+        budget_left -= len(piece)
+
+    if not used:
+        return "", []
+
+    block = "\n".join(lines).strip() + "\n"
+    return block, used
+
+
+def write_knowledge_sources_json(session_path: Path, used_files: list[str]) -> None:
+    if not used_files:
+        return
+    payload = {"used_files": used_files}
+    try:
+        (session_path / "knowledge_sources.json").write_text(
+            json.dumps(payload, indent=2),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
 def build_context_for(
     agent: str,
     *,
@@ -34,6 +156,7 @@ def build_context_for(
     max_chars: int,
     parallel_initial: bool = False,
     prior_reference: str | None = None,
+    knowledge_reference: str | None = None,
 ) -> str:
     """
     Role-based context isolation per implementation plan Phase 4.
@@ -52,6 +175,10 @@ def build_context_for(
     parts: list[str] = [f"### User question\n{q}\n"]
     if fb:
         parts.append(fb)
+
+    kb = (knowledge_reference or "").strip()
+    if kb:
+        parts.append(kb + "\n")
 
     pr = (prior_reference or "").strip()
     if pr and agent_l == "researcher":

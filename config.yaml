@@ -51,6 +51,18 @@ session_reuse:
 context:
   max_chars: 48000
 
+# --- Optional user knowledge base injection ---
+# Add trusted files/folders to prime agents with project/context memory.
+# You can also pass --kb <path> one or more times at runtime.
+knowledge_base:
+  enabled: false
+  paths: []
+  include_extensions: [".md", ".txt"]
+  max_chars: 16000
+  # Optional: only inject KB into selected agents. Omit/empty => all agents.
+  # Valid ids: researcher, skeptic, contrarian, reviewer, synthesizer, skeptic_round2, researcher_round2
+  roles: []
+
 # --- API / quota pacing (Gemini CLI subprocesses). Tunes burstiness and soft 429 handling.
 # Defaults are conservative: small gaps between calls, no overlapping Researcher+Skeptic,
 # exponential backoff retries when stderr looks like quota / rate limit / 429.

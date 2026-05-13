@@ -132,6 +132,8 @@ def _run_gemini_subprocess(
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
         "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
         "cwd": str(cwd) if cwd else None,
         "shell": False,
     }

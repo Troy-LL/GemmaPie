@@ -76,6 +76,16 @@ python orchestrate.py --no-dashboard "Your question here"
 python orchestrate.py --show-thinking "Is nuclear energy safe?"
 ```
 
+**Knowledge-base context** (inject selected files/folders into agent context):
+
+```bash
+python orchestrate.py --kb docs --kb notes/strategy.md "Is nuclear energy safe?"
+```
+
+You can also set defaults in `config.yaml` under `knowledge_base` (`enabled`, `paths`, `include_extensions`, `max_chars`). When used, each session writes `knowledge_context.md` and `knowledge_sources.json`.
+
+To scope KB to specific agents only, set `knowledge_base.roles` (e.g. `["researcher", "synthesizer"]`). If omitted/empty, KB is injected for all agents.
+
 ## Session outputs
 
 Each run creates `sessions/session_YYYYMMDD_HHMMSS/` containing:
