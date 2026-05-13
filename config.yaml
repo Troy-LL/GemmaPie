@@ -1,4 +1,5 @@
 # Runtime configuration for `orchestrate.py` / `src.pipeline`
+# Source of truth for shipped defaults (README defers here for model ids, adaptive, KB, fallbacks).
 #
 # Per-agent model ids for `gemini -m`. Use ids from `gemini models list` for your
 # auth (API key or Google account). Tier rationale: agent_configs.md (Gemini 2.5 / 3.x + Gemma).
@@ -59,6 +60,12 @@ knowledge_base:
   paths: []
   include_extensions: [".md", ".txt"]
   max_chars: 16000
+  # legacy | lexical_v2 — lexical ranks passages vs the user question (chunk + TF-IDF).
+  mode: legacy
+  max_chunk_chars: 3200
+  min_score: 0.0
+  max_chunks_preprocess: 5000
+  dedupe: true
   # Optional: only inject KB into selected agents. Omit/empty => all agents.
   # Valid ids: researcher, skeptic, contrarian, reviewer, synthesizer, skeptic_round2, researcher_round2
   roles: []
@@ -88,3 +95,9 @@ adaptive:
   fallback_to_full: true
   max_trivial_add_digits: 6
   require_claims_for_t1_fallback: false
+
+# If a role's primary `models:` id fails, retry the same prompt with each id here (in order).
+# Keeps your heterogeneous 3.x map; only falls back when needed.
+model_fallback_chain:
+  - gemini-2.5-flash
+  - gemini-2.5-flash-lite

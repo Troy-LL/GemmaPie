@@ -127,7 +127,35 @@ def _short_circuit_summary(
         "show_thinking": False,
         "adaptive_tier": None,
         "adaptive_meta": None,
+        "model_resolution": {
+            "_note": "Reuse short-circuit: no Gemini invocations for this run.",
+        },
     }
+
+
+def _print_model_fallback_summary(summary: dict[str, Any]) -> None:
+    """One line per agent when primary != resolved or multiple models were tried."""
+    mr = summary.get("model_resolution")
+    if not isinstance(mr, dict):
+        return
+    for role in sorted(mr.keys()):
+        if role.startswith("_"):
+            continue
+        entry = mr.get(role)
+        if not isinstance(entry, dict):
+            continue
+        prim = entry.get("primary")
+        resolv = entry.get("resolved")
+        attempts = entry.get("attempts")
+        if prim == resolv and not (isinstance(attempts, list) and len(attempts) > 1):
+            continue
+        if prim != resolv:
+            print(
+                f"[models] {role}: {prim} → {resolv} (fallback)",
+                file=sys.stdout,
+            )
+        elif isinstance(attempts, list):
+            print(f"[models] {role}: tried={attempts}", file=sys.stdout)
 
 
 def _load_cfg(path: Path) -> dict:
@@ -282,13 +310,25 @@ def main(argv: list[str] | None = None) -> int:
     if kb_enabled and kb_entries:
         kb_max = int(kb_cfg.get("max_chars", 16000))
         kb_exts = kb_cfg.get("include_extensions") or [".md", ".txt"]
-        kb_ref, kb_used_files = context.build_knowledge_reference(
+        kb_mode = str(kb_cfg.get("mode") or "legacy").strip().lower()
+        kb_lex = {
+            "max_chunk_chars": int(kb_cfg.get("max_chunk_chars", 3200)),
+            "min_score": float(kb_cfg.get("min_score", 0.0)),
+            "max_chunks_preprocess": int(kb_cfg.get("max_chunks_preprocess", 5000)),
+            "dedupe": bool(kb_cfg.get("dedupe", True)),
+        }
+        kb_result = context.build_knowledge_reference(
             root=root,
             entries=kb_entries,
             max_chars=kb_max,
             allowed_exts=kb_exts,
+            question=question,
+            mode=kb_mode,
+            lexical=kb_lex if kb_mode == "lexical_v2" else None,
         )
-        context.write_knowledge_sources_json(session_path, kb_used_files)
+        kb_ref = kb_result.block
+        kb_used_files = kb_result.used_files
+        context.write_knowledge_sources_json(session_path, kb_result.sources_meta)
         if kb_ref.strip():
             try:
                 (session_path / "knowledge_context.md").write_text(kb_ref, encoding="utf-8")
@@ -632,6 +672,16 @@ def main(argv: list[str] | None = None) -> int:
                 encoding="utf-8",
             )
 
+        mr = summary.get("model_resolution")
+        if mr is not None:
+            try:
+                (session_path / "model_resolution.json").write_text(
+                    json.dumps(mr, indent=2),
+                    encoding="utf-8",
+                )
+            except (TypeError, OSError):
+                pass
+
         reporting.write_report(
             session_path=session_path,
             question=question,
@@ -673,13 +723,16 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     print(f"\nSession written to: {session_path}")
+    _print_model_fallback_summary(summary)
     print(
         "  - final_answer.txt (same text as the FINAL ANSWER block above)\n"
         "  - synthesizer_public.txt (for future session reuse)\n"
         "  - reuse_provenance.json (when reuse matched)\n"
         "  - sessions/topic_log.jsonl (append-only run index)\n"
         "  - report.md\n  - transcript.md\n  - audit.json\n  - disagreements.json\n"
-        "  - models_used.json\n  - scratchpad.md\n  - shared_facts.md\n"
+        "  - models_used.json\n"
+        "  - model_resolution.json (primary vs resolved model id per agent step)\n"
+        "  - scratchpad.md\n  - shared_facts.md\n"
         "  - optional *_thinking.txt when thinking mode is on\n"
         "  - optional knowledge_context.md / knowledge_sources.json when KB context is enabled"
     )

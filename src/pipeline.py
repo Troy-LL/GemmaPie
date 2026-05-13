@@ -27,6 +27,42 @@ _SKIP_T1 = "(Not invoked: adaptive tier T1.)"
 _FAILURE_SNIP_LEN = 700
 
 
+def _parse_model_fallback_chain(cfg: dict[str, Any]) -> list[str]:
+    """Ordered model ids to try if the primary `-m` for an agent step fails."""
+    raw = cfg.get("model_fallback_chain")
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    if isinstance(raw, dict):
+        if raw.get("enabled") is False:
+            return []
+        m = raw.get("models")
+        if isinstance(m, list):
+            return [str(x).strip() for x in m if str(x).strip()]
+    return []
+
+
+def _attempts_from_gemini_result(res: dict[str, Any], primary: str) -> list[str]:
+    tried = res.get("_models_tried")
+    if isinstance(tried, list) and tried:
+        return [str(x) for x in tried]
+    return [str(res.get("_resolved_model") or primary)]
+
+
+def _model_resolution_payload(
+    primary_by_agent: dict[str, str],
+    resolved_models: dict[str, str],
+    attempts_by_agent: dict[str, list[str]],
+) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for agent, resolved in resolved_models.items():
+        prim = primary_by_agent.get(agent, resolved)
+        attempts = attempts_by_agent.get(agent) or [prim]
+        out[agent] = {"primary": prim, "resolved": resolved, "attempts": attempts}
+    return out
+
+
 def _failure_placeholder(agent: str, msg: str) -> str:
     m = (msg or "unknown error").strip()
     if len(m) > _FAILURE_SNIP_LEN:
@@ -237,6 +273,10 @@ def _run_full_pipeline_core(
 
     errors: list[str] = []
     max_concurrent = _max_concurrent_from_cfg(cfg)
+    fallback_chain = _parse_model_fallback_chain(cfg)
+    resolved_models: dict[str, str] = {}
+    primary_models: dict[str, str] = {}
+    attempts_models: dict[str, list[str]] = {}
 
     def kb_for(agent_name: str) -> str | None:
         if not knowledge_reference:
@@ -260,22 +300,28 @@ def _run_full_pipeline_core(
             knowledge_reference=kb_for(ctx_agent),
         )
         full_prompt = compose_full_prompt(prompts[system_key], task)
+        primary = model_for(agent)
         if on_agent_start:
             on_agent_start(
                 agent,
                 {
-                    "model": model_for(agent),
+                    "model": primary,
                     "timeout_s": timeout_for(agent),
                     "show_thinking": bool(show_thinking),
                     "prompt_chars": len(full_prompt),
+                    "fallback_models": fallback_chain[:16],
                 },
             )
-        res = gemini_runner.run_gemini(
+        primary_models[agent] = primary
+        res, _used_id = gemini_runner.run_gemini_with_fallback_models(
             full_prompt,
-            model=model_for(agent),
+            primary_model=primary,
+            fallback_models=fallback_chain,
             timeout=timeout_for(agent),
             cwd=session_path,
         )
+        attempts_models[agent] = _attempts_from_gemini_result(res, primary)
+        resolved_models[agent] = str(res.get("_resolved_model") or _used_id or primary)
         if res.get("ok") and isinstance(res.get("text"), str):
             commit_agent_output(agent, str(res["text"]), res)
         else:
@@ -317,6 +363,10 @@ def _run_full_pipeline_core(
         fp_s = compose_full_prompt(prompts["skeptic"], task_ps)
 
         def finish_parallel_agent(name: str, res: dict[str, Any]) -> None:
+            prim = model_for(name)
+            primary_models[name] = prim
+            attempts_models[name] = _attempts_from_gemini_result(res, prim)
+            resolved_models[name] = str(res.get("_resolved_model") or model_for(name))
             if res.get("ok") and res.get("text"):
                 commit_agent_output(name, str(res["text"]), res)
                 res_out = dict(res)
@@ -344,12 +394,14 @@ def _run_full_pipeline_core(
                                 "model": model_for("researcher"),
                                 "timeout_s": timeout_for("researcher"),
                                 "prompt_chars": len(fp_r),
+                                "fallback_models": fallback_chain[:16],
                             },
                             {
                                 "agent": "skeptic",
                                 "model": model_for("skeptic"),
                                 "timeout_s": timeout_for("skeptic"),
                                 "prompt_chars": len(fp_s),
+                                "fallback_models": fallback_chain[:16],
                             },
                         ],
                         "show_thinking": bool(show_thinking),
@@ -357,18 +409,20 @@ def _run_full_pipeline_core(
                 )
 
             def run_r() -> tuple[str, dict[str, Any]]:
-                res = gemini_runner.run_gemini(
+                res, _ = gemini_runner.run_gemini_with_fallback_models(
                     fp_r,
-                    model=model_for("researcher"),
+                    primary_model=model_for("researcher"),
+                    fallback_models=fallback_chain,
                     timeout=timeout_for("researcher"),
                     cwd=session_path,
                 )
                 return "researcher", res
 
             def run_s() -> tuple[str, dict[str, Any]]:
-                res = gemini_runner.run_gemini(
+                res, _ = gemini_runner.run_gemini_with_fallback_models(
                     fp_s,
-                    model=model_for("skeptic"),
+                    primary_model=model_for("skeptic"),
+                    fallback_models=fallback_chain,
                     timeout=timeout_for("skeptic"),
                     cwd=session_path,
                 )
@@ -391,11 +445,13 @@ def _run_full_pipeline_core(
                         "show_thinking": bool(show_thinking),
                         "prompt_chars": len(fp_r),
                         "parallel_initial_sequential": True,
+                        "fallback_models": fallback_chain[:16],
                     },
                 )
-            res_r = gemini_runner.run_gemini(
+            res_r, _ = gemini_runner.run_gemini_with_fallback_models(
                 fp_r,
-                model=model_for("researcher"),
+                primary_model=model_for("researcher"),
+                fallback_models=fallback_chain,
                 timeout=timeout_for("researcher"),
                 cwd=session_path,
             )
@@ -409,11 +465,13 @@ def _run_full_pipeline_core(
                         "show_thinking": bool(show_thinking),
                         "prompt_chars": len(fp_s),
                         "parallel_initial_sequential": True,
+                        "fallback_models": fallback_chain[:16],
                     },
                 )
-            res_s = gemini_runner.run_gemini(
+            res_s, _ = gemini_runner.run_gemini_with_fallback_models(
                 fp_s,
-                model=model_for("skeptic"),
+                primary_model=model_for("skeptic"),
+                fallback_models=fallback_chain,
                 timeout=timeout_for("skeptic"),
                 cwd=session_path,
             )
@@ -456,6 +514,10 @@ def _run_full_pipeline_core(
 
     invoke("synthesizer", "synthesizer")
 
+    model_resolution = _model_resolution_payload(
+        primary_models, resolved_models, attempts_models
+    )
+
     return {
         "question": question,
         "outputs": outputs,
@@ -465,16 +527,18 @@ def _run_full_pipeline_core(
         "synthesizer_confidence": parse_confidence(outputs.get("synthesizer", "")),
         "models_used": {
             "default": default_model,
-            "researcher": model_for("researcher"),
-            "skeptic": model_for("skeptic"),
-            "contrarian": model_for("contrarian"),
-            "reviewer": model_for("reviewer"),
-            "synthesizer": model_for("synthesizer"),
-            "researcher_round2": model_for("researcher_round2"),
-            "skeptic_round2": model_for("skeptic_round2"),
+            "researcher": resolved_models.get("researcher") or model_for("researcher"),
+            "skeptic": resolved_models.get("skeptic") or model_for("skeptic"),
+            "contrarian": resolved_models.get("contrarian") or model_for("contrarian"),
+            "reviewer": resolved_models.get("reviewer") or model_for("reviewer"),
+            "synthesizer": resolved_models.get("synthesizer") or model_for("synthesizer"),
+            "researcher_round2": resolved_models.get("researcher_round2")
+            or model_for("researcher_round2"),
+            "skeptic_round2": resolved_models.get("skeptic_round2") or model_for("skeptic_round2"),
         },
         "thinking_outputs": thinking_outputs,
         "show_thinking": show_thinking,
+        "model_resolution": model_resolution,
     }
 
 
@@ -608,6 +672,10 @@ def run_pipeline(
             "_tier": "T0",
         }
         _write_adaptive_tier_json(session_path, "T0", meta_out)
+        model_resolution_t0: dict[str, Any] = {
+            "_tier": "T0",
+            "_note": "No Gemini subprocess invocations (deterministic adaptive arithmetic).",
+        }
         return {
             "question": question,
             "outputs": outputs,
@@ -618,6 +686,7 @@ def run_pipeline(
             "models_used": models_used,
             "thinking_outputs": {},
             "show_thinking": eff_show,
+            "model_resolution": model_resolution_t0,
         }
 
     if adaptive_tier == "T2":
@@ -682,6 +751,11 @@ def run_pipeline(
         "synthesizer": load_text(prompts_dir / "synthesizer.txt"),
     }
 
+    fallback_chain_t1 = _parse_model_fallback_chain(cfg)
+    resolved_t1: dict[str, str] = {}
+    primary_t1_models: dict[str, str] = {}
+    attempts_t1_models: dict[str, list[str]] = {}
+
     outputs_t1: dict[str, str] = {}
     thinking_t1: dict[str, str] = {}
     errors_t1: list[str] = []
@@ -735,22 +809,28 @@ def run_pipeline(
             ),
         )
         full_prompt = compose_full_prompt(prompts[system_key], task)
+        primary_t1 = model_for_t1(agent)
+        primary_t1_models[agent] = primary_t1
         if on_agent_start:
             on_agent_start(
                 agent,
                 {
-                    "model": model_for_t1(agent),
+                    "model": primary_t1,
                     "timeout_s": timeout_for(agent),
                     "show_thinking": bool(eff_show),
                     "prompt_chars": len(full_prompt),
+                    "fallback_models": fallback_chain_t1[:16],
                 },
             )
-        res = gemini_runner.run_gemini(
+        res, _rid = gemini_runner.run_gemini_with_fallback_models(
             full_prompt,
-            model=model_for_t1(agent),
+            primary_model=primary_t1,
+            fallback_models=fallback_chain_t1,
             timeout=timeout_for(agent),
             cwd=session_path,
         )
+        attempts_t1_models[agent] = _attempts_from_gemini_result(res, primary_t1)
+        resolved_t1[agent] = str(res.get("_resolved_model") or _rid or primary_t1)
         if res.get("ok") and isinstance(res.get("text"), str):
             commit_agent_output_t1(agent, str(res["text"]), res)
         else:
@@ -822,17 +902,21 @@ def run_pipeline(
     _nm = "(adaptive T1 — not invoked)"
     models_used_t1 = {
         "default": default_model,
-        "researcher": model_for_t1("researcher"),
+        "researcher": resolved_t1.get("researcher") or model_for_t1("researcher"),
         "skeptic": _nm,
         "contrarian": _nm,
         "reviewer": _nm,
-        "synthesizer": model_for_t1("synthesizer"),
+        "synthesizer": resolved_t1.get("synthesizer") or model_for_t1("synthesizer"),
         "researcher_round2": _nm,
         "skeptic_round2": _nm,
         "_tier": "T1",
     }
     outputs_t1["skeptic_round2"] = _SKIP_T1
     outputs_t1["researcher_round2"] = _SKIP_T1
+
+    model_resolution_t1 = _model_resolution_payload(
+        primary_t1_models, resolved_t1, attempts_t1_models
+    )
 
     _write_adaptive_tier_json(session_path, "T1", meta_out)
     return {
@@ -845,4 +929,5 @@ def run_pipeline(
         "models_used": models_used_t1,
         "thinking_outputs": thinking_t1,
         "show_thinking": eff_show,
+        "model_resolution": model_resolution_t1,
     }

@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping, NamedTuple
 
-from . import scratchpad
+from . import kb_lexical, scratchpad
+
+
+class KnowledgeReferenceResult(NamedTuple):
+    block: str
+    used_files: list[str]
+    sources_meta: dict[str, Any]
 
 
 def trim_to_budget(text: str, max_chars: int) -> str:
@@ -77,16 +83,21 @@ def build_knowledge_reference(
     entries: Iterable[str],
     max_chars: int,
     allowed_exts: Iterable[str] | None = None,
-) -> tuple[str, list[str]]:
+    question: str = "",
+    mode: str = "legacy",
+    lexical: dict[str, Any] | None = None,
+) -> KnowledgeReferenceResult:
     """
     Build a bounded context block from user-provided files/folders.
 
-    Returns:
-      - markdown/reference block for prompts
-      - list of file paths actually included (for session audit)
+    ``mode``:
+      - ``legacy``: file discovery order, whole-file truncation (ignores ``question``).
+      - ``lexical_v2``: chunk, dedupe, TF-IDF vs ``question``, pack by score.
+
+    Returns ``KnowledgeReferenceResult`` with ``sources_meta`` for ``knowledge_sources.json``.
     """
     if max_chars <= 0:
-        return "", []
+        return KnowledgeReferenceResult("", [], {"used_files": [], "mode": mode})
     exts = _norm_exts(allowed_exts)
     candidates: list[Path] = []
     seen: set[str] = set()
@@ -105,7 +116,26 @@ def build_knowledge_reference(
                 candidates.append(fp)
 
     if not candidates:
-        return "", []
+        return KnowledgeReferenceResult("", [], {"used_files": [], "mode": mode})
+
+    mode_l = str(mode or "legacy").strip().lower()
+    if mode_l == "lexical_v2":
+        lx = dict(lexical or {})
+        max_chunk_chars = int(lx.get("max_chunk_chars", 3200))
+        min_score = float(lx.get("min_score", 0.0))
+        max_chunks_preprocess = int(lx.get("max_chunks_preprocess", 5000))
+        dedupe = bool(lx.get("dedupe", True))
+        block, used, meta = kb_lexical.build_lexical_kb(
+            file_paths=candidates,
+            rel_fn=lambda fp: _pretty_rel(fp, root),
+            question=question,
+            max_chars=max_chars,
+            max_chunk_chars=max_chunk_chars,
+            min_score=min_score,
+            max_chunks_preprocess=max_chunks_preprocess,
+            dedupe=dedupe,
+        )
+        return KnowledgeReferenceResult(block, used, meta)
 
     lines = ["### User-provided knowledge base (reference context)"]
     used: list[str] = []
@@ -128,22 +158,29 @@ def build_knowledge_reference(
         budget_left -= len(piece)
 
     if not used:
-        return "", []
+        return KnowledgeReferenceResult("", [], {"used_files": [], "mode": "legacy"})
 
     block = "\n".join(lines).strip() + "\n"
-    return block, used
+    return KnowledgeReferenceResult(
+        block,
+        used,
+        {"used_files": used, "mode": "legacy"},
+    )
 
 
-def write_knowledge_sources_json(session_path: Path, used_files: list[str]) -> None:
-    if not used_files:
-        return
-    payload = {"used_files": used_files}
+def write_knowledge_sources_json(session_path: Path, payload: dict[str, Any]) -> None:
     try:
+        if not payload:
+            return
+        mode = str(payload.get("mode") or "legacy")
+        uf = payload.get("used_files")
+        if mode == "legacy" and (not isinstance(uf, list) or not uf):
+            return
         (session_path / "knowledge_sources.json").write_text(
             json.dumps(payload, indent=2),
             encoding="utf-8",
         )
-    except OSError:
+    except (TypeError, OSError):
         pass
 
 

@@ -18,7 +18,7 @@ Judge- and developer-facing index. Paths are relative to the repository root.
 
 | File | Description |
 |------|-------------|
-| [../config.yaml](../config.yaml) | `model`, per-role `models:`, timeouts, `thinking.enabled`, `session_reuse`, `adaptive`, pipeline flags |
+| [../config.yaml](../config.yaml) | `model`, per-role `models:`, timeouts, `thinking.enabled`, `session_reuse`, `adaptive`, `knowledge_base` (`mode` legacy vs lexical_v2), pipeline flags |
 
 ## External references
 
@@ -35,6 +35,14 @@ Judge- and developer-facing index. Paths are relative to the repository root.
 - OneManCompany: [arxiv:2604.22446](https://arxiv.org/pdf/2604.22446)
 - HALO (reference implementation): [github.com/context-labs/halo](https://github.com/context-labs/halo)
 
+## Knowledge base (lexical v2)
+
+Optional **`knowledge_base.mode: lexical_v2`** in [`config.yaml`](../config.yaml) selects passages by lexical relevance (chunk + TF-IDF) vs the question—see [README.md](../README.md) KB section for knobs (`max_chunk_chars`, `dedupe`, etc.). Embedding-based retrieval is **not** included yet.
+
 ## Model verification
 
 Use the CLI or API model list for your channel; then align ids in `agent_configs.md` and `config.yaml`. See README “Model verification” for suggested smoke steps.
+
+## Pipeline size / roadmap
+
+Longer-term polish ideas are summarized in the README “Internals & future work” section (optional split of `pipeline.py`). KB roadmap beyond lexical v2: **embedding retrieval** and **claim-level citations** in outputs.

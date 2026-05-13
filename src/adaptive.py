@@ -19,6 +19,9 @@ Tier = Literal["T0", "T1", "T2", "unknown"]
 class ClassifyResult:
     tier: str
     reason: str
+    t0_a: int | None = None
+    t0_b: int | None = None
+    t0_sum: int | None = None
 
 
 def parse_trivial_add(question: str, max_digits: int) -> tuple[int, int, int] | None:
@@ -41,7 +44,13 @@ def classify_heuristic(question: str, max_digits: int) -> ClassifyResult:
     if t is None:
         return ClassifyResult(tier="unknown", reason="not_trivial_add")
     a, b, total = t
-    return ClassifyResult(tier="T0", reason=f"trivial_addition:{a}+{b}={total}")
+    return ClassifyResult(
+        tier="T0",
+        reason=f"trivial_addition:{a}+{b}={total}",
+        t0_a=a,
+        t0_b=b,
+        t0_sum=total,
+    )
 
 
 def _extract_json_object(text: str) -> dict[str, Any] | None:

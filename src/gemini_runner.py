@@ -322,3 +322,52 @@ def run_gemini(
         "error": "Internal error: rate-limit retry loop exited empty.",
         "returncode": None,
     }
+
+
+def run_gemini_with_fallback_models(
+    prompt: str,
+    *,
+    primary_model: str,
+    fallback_models: list[str],
+    timeout: float,
+    cwd: Path | None = None,
+) -> tuple[dict[str, Any], str]:
+    """
+    Try ``primary_model``, then each distinct entry in ``fallback_models`` until one succeeds.
+
+    Adds keys on the returned dict:
+      - ``_resolved_model``: model id that produced the response (or last attempt if all failed)
+      - ``_models_tried``: ordered list of model ids attempted
+
+    Returns ``(result_dict, resolved_model_id)``.
+    """
+    chain: list[str] = []
+    seen: set[str] = set()
+    for m in [primary_model, *fallback_models]:
+        ms = str(m).strip()
+        if not ms or ms in seen:
+            continue
+        seen.add(ms)
+        chain.append(ms)
+
+    last: dict[str, Any] | None = None
+    tried: list[str] = []
+    for mid in chain:
+        tried.append(mid)
+        last = run_gemini(prompt, model=mid, timeout=timeout, cwd=cwd)
+        if last.get("ok"):
+            out = {
+                **last,
+                "_resolved_model": mid,
+                "_models_tried": tried,
+            }
+            return out, mid
+
+    assert last is not None
+    resolved = chain[-1] if chain else str(primary_model).strip()
+    out = {
+        **last,
+        "_resolved_model": resolved,
+        "_models_tried": tried,
+    }
+    return out, resolved
